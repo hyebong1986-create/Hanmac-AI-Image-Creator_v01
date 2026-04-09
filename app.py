@@ -337,11 +337,6 @@ if st.button("🚀 조감도 및 아이콘 생성", type="primary"):
             # 2. Imagen 3로 이미지 생성 (Forge 대체)
             with st.spinner("Imagen 3 엔진이 고해상도 이미지를 생성 중입니다..."):
                 try:
-                    # 라이브러리 버전 확인용 체크
-                    if not hasattr(client.models, 'generate_image'):
-                        st.error("❌ 이미지 생성 메서드('generate_image')를 찾을 수 없습니다. 라이브러리를 최신 버전으로 업데이트해야 합니다. 터미널(CMD)에서 'pip install -U google-genai'를 실행한 후 앱을 재시작해 주세요.")
-                        st.stop()
-
                     # 비율 계산 (Imagen 3 지원 형식으로 매핑)
                     ratio_val = px_w / px_h
                     target_ratio = "1:1"
