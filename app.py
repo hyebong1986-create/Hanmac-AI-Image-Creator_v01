@@ -362,21 +362,21 @@ if st.button("🚀 조감도 및 아이콘 생성", type="primary"):
                     )
                     img_bytes = image_response.generated_images[0].image_bytes
                     
-                # --- 5. 결과물 출력 ---
-                with st.container(border=True):
-                    res_col1, res_col2 = st.columns([0.7, 0.3])
-                    with res_col1:
-                        st.image(Image.open(io.BytesIO(img_bytes)), use_container_width=True)
-                    with res_col2:
-                        st.markdown("### 📋 생성 정보 (Imagen 3)")
-                        st.write(f"**모드:** {st.session_state.gen_mode}")
-                        st.write(f"**디자인:** {st.session_state.design_style}")
-                        st.write(f"**비율:** {target_ratio}")
-                        with st.expander("생성 프롬프트 보기"):
-                            st.write(final_prompt)
-                st.balloons()
-            except Exception as img_e:
-                st.error(f"이미지 생성 중 오류가 발생했습니다: {img_e}")
+                    # --- 5. 결과물 출력 ---
+                    with st.container(border=True):
+                        res_col1, res_col2 = st.columns([0.7, 0.3])
+                        with res_col1:
+                            st.image(Image.open(io.BytesIO(img_bytes)), use_container_width=True)
+                        with res_col2:
+                            st.markdown("### 📋 생성 정보 (Imagen 3)")
+                            st.write(f"**모드:** {st.session_state.gen_mode}")
+                            st.write(f"**디자인:** {st.session_state.design_style}")
+                            st.write(f"**비율:** {target_ratio}")
+                            with st.expander("생성 프롬프트 보기"):
+                                st.write(final_prompt)
+                    st.balloons()
+                except Exception as img_e:
+                    st.error(f"이미지 생성 중 오류가 발생했습니다: {img_e}")
 
         except Exception as e:
             st.error(f"예상치 못한 오류가 발생했습니다: {e}")
