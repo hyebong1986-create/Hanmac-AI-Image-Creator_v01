@@ -145,6 +145,12 @@ if 'api_key' not in st.session_state:
 # --- 2. 사이드바: PDF 문서 업로드 ---
 with st.sidebar:
     st.markdown("### 🔑 API 설정")
+    
+    # 라이브러리 버전 확인용 (디버깅)
+    import importlib.metadata
+    sdk_version = importlib.metadata.version('google-genai')
+    st.caption(f"SDK 버전: `{sdk_version}` (0.4.0 이상 권장)")
+
     # API 키 입력 필드 (세션 상태와 연동)
     user_input_api_key = st.text_input(
         "Gemini API Key",
