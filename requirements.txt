@@ -1,5 +1,5 @@
 streamlit
-google-genai
+google-genai>=0.3.0
 pdfplumber
 pillow
 requests
