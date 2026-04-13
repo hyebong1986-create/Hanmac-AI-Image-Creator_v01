@@ -1,221 +1,203 @@
-import streamlit as st
+import time
+import re
 import os
+import io
+
+import streamlit as st
+import pdfplumber
+from PIL import Image
+
 from google import genai
 from google.genai import types
-import requests
-import io
-import base64
-from PIL import Image
-import pdfplumber
-import importlib.metadata
 
-# --- [기능 함수] 모델 자동 탐색 로직 ---
-
-def get_available_gemini_model(api_key):
-    """사용 가능한 최신 Gemini(텍스트) 모델을 탐색합니다."""
-    if not api_key: return None, "API 키가 없습니다."
-    try:
-        temp_client = genai.Client(api_key=api_key)
-        available_models = [m.name for m in temp_client.models.list() if "gemini" in m.name]
-        
-        if not available_models: return None, "Gemini 모델을 찾을 수 없습니다."
-
-        priority_models = [
-            "gemini-2.0-pro", "gemini-1.5-pro", "gemini-2.0-flash", "gemini-1.5-flash"
-        ]
-        for p in priority_models:
-            for a in available_models:
-                if p in a: return a, None
-        return available_models[0], None
-    except Exception as e:
-        return None, f"Gemini 모델 목록 오류: {e}"
-
-def get_available_imagen_model(api_key):
-    """유료 플랜에서 사용 가능한 최신 Imagen 3 모델을 탐색합니다."""
-    if not api_key: return None, "API 키가 없습니다."
-    try:
-        temp_client = genai.Client(api_key=api_key)
-        available_models = [m.name for m in temp_client.models.list() if "imagen" in m.name.lower()]
-        
-        priority_models = ["imagen-3.0-generate-002", "imagen-3.0-generate-001", "imagen-3"]
-        for p in priority_models:
-            for a in available_models:
-                if p == a or p in a: return a, None
-        return available_models[0] if available_models else "imagen-3.0-generate-002", None
-    except:
-        return "imagen-3.0-generate-002", None
-
-# --- [디자인 가이드] 혜봉님 커스텀 상세 가이드 ---
-
-DESIGN_A_GUIDE = """
+# =========================
+# 1. 디자인 시스템 (혜봉님의 마스터 가이드 A 전문 보존)
+# =========================
+STYLE_A_PROMPT = """
 [BASE GUIDE - TYPE 1 (Layout & System Only)]
+
 SYSTEM
-* Information-first composition / Diagram-style visual language / Presentation board style
+* Information-first composition / Diagram-style visual language
+* Presentation board style / Not artistic, not cinematic
+
 PRIORITY
-1. High readability / 2. Balanced spacing and alignment / 3. Clean structured layout
+1. High readability priority / 2. Balanced spacing and alignment
+3. Clean structured layout / 4. Strict color distribution
+
 DESIGN
 * White-dominant corporate infographic / High whitespace ratio (70–80%)
-* Clean geometric sans-serif placeholders / No background color flooding
+* Clean geometric sans-serif placeholders for text areas / No background color flooding
+
+LAYOUT
+* Follow given content hierarchy strictly / Preserve grouping and sequence (do not rearrange meaning)
+* Structured and connected flow lines joining panels to show grouping and sequence
+
 COLOR
 * Primary Accent (10–20%): Muted deep green (#249473)
+  - Low saturation, slightly dark tone. Use strictly for the distinct dark title bars at the top of core panels and main flow lines.
 * Secondary Accent (5–12%): Desaturated brown (#3E3523 to #604F32 range)
-* Minimal Highlight (2–6%): Burnt orange (#CC5200) / Base (65–80%): White
-PANEL
-* Surface: Glass-like panels, near-white tint, light transparency, defined rounded edges
-"""
+  - Use strictly for the sub-panel title bars within main panels and comparison axes.
+* Minimal Highlight (2–6%): Burnt orange (#CC5200)
+  - Use for micro focal points only.
+* Base (65–80%): White and near-white
+  - Dominant background and panel bodies.
 
-ICON_A_GUIDE = """
-[ICON SYSTEM - TYPE 1]
-* Style: 3D isometric product render, high-detail modeling
-* Material: Matte clay-texture + soft semi-gloss (not metallic)
-* Lighting: Soft studio lighting, top-front key light, no harsh highlights
-"""
+PANEL (GLASS-LIKE SYSTEM)
+* Surface: Glass-like panels with near-white tint, very light transparency
+* Edges: Defined rounded edges
+* Glow: Localized glow only (small radius, low intensity, opacity ~10–20%, focused only on edges of dark title bars or connection points)
+* Shadow: Soft minimal shadow (short distance, low blur, very shallow depth, just enough to make panels float)
+* Gradient: Soft and controlled (2–3 colors only, low contrast, no spotlight effect)
 
-# --- [UI/UX] 페이지 설정 및 테마 ---
+FORBIDDEN
+* No neon lighting, no sci-fi cinematic mood, no dramatic lighting, no high contrast lighting
+* No photoreal rendering, no glossy reflections, no heavy texture, no exaggerated 3D depth
+* No full-canvas mint wash, no high-chroma pastel flood
+""".strip()
 
-st.set_page_config(page_title="나노바나나 인포그래픽 엔진", layout="wide", page_icon="🍌")
+DESIGN_GUIDES = {
+    "Style A": STYLE_A_PROMPT,
+    "Style B": "[STYLE: MODERN B] Clean tech-minimalist, blue accent theme.",
+    "Style C": "[STYLE: CLASSIC C] Warm tones, elegant serif typography feel."
+}
 
-st.markdown("""
-    <style>
-    .stApp { background-color: #FAFAF8; }
-    .main-title { font-size: 24px; font-weight: 700; color: #1a1a1a; margin-bottom: 5px; }
-    .nanobana-badge { display: inline-block; padding: 2px 12px; border-radius: 99px; background: #edf7f3; border: 1px solid #a8dcc8; color: #266651; font-size: 12px; font-weight: 600; margin-bottom: 10px; }
-    .flow-notice { background: #edf7f3; border: 1px solid #a8dcc8; border-radius: 10px; padding: 15px; color: #266651; font-size: 14px; margin-bottom: 20px; }
-    div.stButton > button[kind="primary"] { background-color: #249473 !important; color: white !important; border: none !important; box-shadow: 0 2px 4px rgba(36,148,115,0.3); }
-    div.stButton > button[kind="primary"]:hover { background-color: #266651 !important; }
-    div.stButton > button[kind="secondary"] { background-color: #edf7f3 !important; color: #266651 !important; border: 1px solid #a8dcc8 !important; }
-    .summary-box { background: #ffffff; border-left: 5px solid #D0A98C; padding: 15px; border-radius: 5px; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin: 10px 0; }
-    </style>
-    """, unsafe_allow_html=True)
+# =========================
+# 2. 엔진 유틸리티 (503 에러 우회용 다중 모델 로직)
+# =========================
+def init_session():
+    defaults = {
+        "api_key": "", "gen_mode": "Strict", "design_style": "Style A", 
+        "summary_text": "", "final_prompt": "", "doc_content": "", "design_instruction": ""
+    }
+    for k, v in defaults.items():
+        if k not in st.session_state: st.session_state[k] = v
 
-# 세션 상태 초기화
-for key, val in {
-    'design_style': 'Style A', 'icon_style': 'Icon A', 'gen_mode': 'Strict', 
-    'api_key': os.getenv("GEMINI_API_KEY"), 'selected_gemini_model': None, 'selected_imagen_model': None
-}.items():
-    if key not in st.session_state: st.session_state[key] = val
+def get_client():
+    if not st.session_state.api_key: return None
+    return genai.Client(api_key=st.session_state.api_key)
 
-# --- [사이드바] 설정 및 계산기 ---
+def call_text_model_with_fallback(client, prompt):
+    # 서버 체증(503) 발생 시 순차적으로 시도할 모델 리스트
+    target_models = ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"]
+    last_error = None
+
+    for model_name in target_models:
+        try:
+            res = client.models.generate_content(
+                model=model_name, 
+                contents=prompt, 
+                config=types.GenerateContentConfig(temperature=0.0)
+            )
+            return (res.text or "").strip(), model_name
+        except Exception as e:
+            last_error = e
+            if "503" in str(e) or "quota" in str(e).lower():
+                continue # 다음 모델로 시도
+            break
+    raise RuntimeError(f"모든 엔진이 응답하지 않습니다. 마지막 오류: {last_error}")
+
+def generate_multimodal_image_with_fallback(client, prompt):
+    # 노트북LM 기능을 수행하기 위해 이미지 생성이 가능한 모델 리스트
+    target_models = ["gemini-2.0-flash", "gemini-1.5-flash"]
+    
+    for model_name in target_models:
+        try:
+            res = client.models.generate_content(
+                model=model_name, 
+                contents=prompt, 
+                config=types.GenerateContentConfig(response_modalities=["IMAGE"])
+            )
+            for part in res.candidates[0].content.parts:
+                if part.inline_data:
+                    return Image.open(io.BytesIO(part.inline_data.data)), model_name
+        except:
+            continue
+            
+    # 최후의 수단: 이미지 전용 모델 Imagen
+    res = client.models.generate_images(model="imagen-3", prompt=prompt, config=types.GenerateImagesConfig(number_of_images=1))
+    return Image.open(io.BytesIO(res.generated_images[0].image.image_bytes)), "imagen-3"
+
+# =========================
+# 3. UI 구성 (한맥 그린 CSS 고정)
+# =========================
+st.set_page_config(page_title="나노바나나 엔진", page_icon="🍌", layout="wide")
+init_session()
+
+st.markdown(f"""
+<style>
+    .stApp {{ background-color: #FAFAF8; }}
+    button[kind="primary"] {{ background-color: #249473 !important; border-color: #249473 !important; color: white !important; font-weight: bold !important; }}
+    button[kind="primary"]:hover {{ background-color: #1e7d61 !important; }}
+    .summary-box {{ background: #ffffff; border-left: 5px solid #249473; padding: 25px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }}
+</style>
+""", unsafe_allow_html=True)
 
 with st.sidebar:
     st.markdown("### 🔑 API 설정")
-    try:
-        sdk_v = importlib.metadata.version('google-genai')
-        st.caption(f"SDK 버전: `{sdk_v}`")
-    except: pass
-
-    user_api_key = st.text_input("Gemini API Key", type="password", value=st.session_state.api_key if st.session_state.api_key else "")
-    if user_api_key != st.session_state.api_key:
-        st.session_state.api_key = user_api_key
-        st.session_state.selected_gemini_model = None
-        st.session_state.selected_imagen_model = None
-        st.rerun()
-
-    if st.session_state.api_key:
-        st.success("✅ 키 연결됨")
-        if not st.session_state.selected_gemini_model:
-            st.session_state.selected_gemini_model, _ = get_available_gemini_model(st.session_state.api_key)
-        if not st.session_state.selected_imagen_model:
-            st.session_state.selected_imagen_model, _ = get_available_imagen_model(st.session_state.api_key)
-        st.caption(f"🤖 분석: {st.session_state.selected_gemini_model}")
-        st.caption(f"🎨 생성: {st.session_state.selected_imagen_model}")
-
+    st.session_state.api_key = st.text_input("Gemini API Key", type="password", value=st.session_state.api_key)
     st.divider()
-    st.markdown("### 📏 [복구] 출력 크기 계산기")
-    dpi = st.selectbox("DPI 선택", [72, 96, 150, 300], index=2)
-    col_w, col_h = st.columns(2)
-    mm_w = col_w.number_input("가로(mm)", value=210)
-    mm_h = col_h.number_input("세로(mm)", value=297)
-    px_w, px_h = int(mm_w * (dpi / 25.4)), int(mm_h * (dpi / 25.4))
-    st.info(f"결과: {px_w} × {px_h} px")
-
+    mm_w, mm_h = st.number_input("가로(mm)", value=210), st.number_input("세로(mm)", value=297)
+    px_w, px_h = int(mm_w * (150 / 25.4)), int(mm_h * (150 / 25.4))
     st.divider()
-    st.markdown("### 📂 원고 업로드")
-    uploaded_file = st.file_uploader("PDF/TXT 파일", type=['pdf', 'txt'])
-    manual_text = st.text_area("직접 입력", placeholder="내용을 입력하세요...")
+    up_file = st.file_uploader("파일 업로드", type=["pdf", "txt"])
+    manual_text = st.text_area("📄 원고 직접 입력", height=150)
+    st.session_state.design_instruction = st.text_area("🎨 디자인 추가 지시사항")
 
-# --- [메인] 화면 구성 및 생성 로직 ---
+st.markdown('# 🍌 나노바나나 디자인 엔진 (NotebookLM Master Ed.)')
 
-st.markdown('<p class="main-title">🍌 나노바나나 디자인 엔진 (Imagen 3)</p>', unsafe_allow_html=True)
-st.markdown('<span class="nanobana-badge">● BASE GUIDE 1 내장</span>', unsafe_allow_html=True)
-st.markdown('<div class="flow-notice">원고 업로드 → 디자인 선택 → 생성 버튼 클릭</div>', unsafe_allow_html=True)
-
-# 디자인 선택 컨테이너 (복구 완료)
 with st.container(border=True):
-    st.markdown("#### 🎯 생성 모드")
-    m1, m2 = st.columns(2)
-    if m1.button("Strict (구조 보존)", use_container_width=True, type="primary" if st.session_state.gen_mode == "Strict" else "secondary"):
-        st.session_state.gen_mode = "Strict"; st.rerun()
-    if m2.button("Generative (재구성)", use_container_width=True, type="primary" if st.session_state.gen_mode == "Generative" else "secondary"):
-        st.session_state.gen_mode = "Generative"; st.rerun()
-    
+    st.markdown("#### ⚙️ 디자인 시스템 설정")
+    c1, c2 = st.columns(2)
+    with c1:
+        if st.button("Strict (구조 보존)", use_container_width=True, type="primary" if st.session_state.gen_mode == "Strict" else "secondary"): st.session_state.gen_mode = "Strict"
+    with c2:
+        if st.button("Generative (재구성)", use_container_width=True, type="primary" if st.session_state.gen_mode == "Generative" else "secondary"): st.session_state.gen_mode = "Generative"
+
     st.divider()
-    st.markdown("#### 🎨 디자인 컨셉")
     d1, d2, d3 = st.columns(3)
-    for i, (btn, label) in enumerate(zip([d1, d2, d3], ["디자인 A (한맥)", "디자인 B", "디자인 C"])):
-        style_key = f"Style {chr(65+i)}"
-        if btn.button(label, use_container_width=True, type="primary" if st.session_state.design_style == style_key else "secondary"):
-            st.session_state.design_style = style_key; st.rerun()
+    for i, (col, label) in enumerate(zip([d1, d2, d3], ["디자인 A (한맥)", "디자인 B", "디자인 C"])):
+        s_name = f"Style {chr(65+i)}"
+        if col.button(label, use_container_width=True, type="primary" if st.session_state.design_style == s_name else "secondary"): st.session_state.design_style = s_name
 
-    st.divider()
-    st.markdown("#### 💎 아이콘 스타일")
-    i1, i2, i3 = st.columns(3)
-    for i, (btn, label) in enumerate(zip([i1, i2, i3], ["아이콘 A (3D)", "아이콘 B", "아이콘 C"])):
-        icon_key = f"Icon {chr(65+i)}"
-        if btn.button(label, use_container_width=True, type="primary" if st.session_state.icon_style == icon_key else "secondary"):
-            st.session_state.icon_style = icon_key; st.rerun()
-
-st.divider()
-
-# 텍스트 추출
 doc_content = ""
-if uploaded_file:
-    if uploaded_file.type == "application/pdf":
-        with pdfplumber.open(uploaded_file) as pdf: doc_content = "".join([p.extract_text() for p in pdf.pages if p.extract_text()])
-    else: doc_content = uploaded_file.read().decode("utf-8")
-elif manual_text: doc_content = manual_text
+if up_file:
+    with pdfplumber.open(up_file) as pdf: doc_content = "\n".join([p.extract_text() for p in pdf.pages if p.extract_text()])
+elif manual_text.strip(): doc_content = manual_text.strip()
 
-client = genai.Client(api_key=st.session_state.api_key) if st.session_state.api_key else None
+client = get_client()
 
-if doc_content and client:
-    st.markdown("### 📋 원고 핵심 요약")
-    with st.spinner("분석 중..."):
-        try:
-            res = client.models.generate_content(model=st.session_state.selected_gemini_model, contents=f"3줄 요약: {doc_content[:1500]}")
-            st.markdown(f'<div class="summary-box">{res.text}</div>', unsafe_allow_html=True)
-        except: st.info("요약 로드 실패")
+if not st.session_state.api_key:
+    st.error("⚠️ 사이드바 맨 위에 **Gemini API Key**를 입력해 주세요.")
+elif not doc_content:
+    st.warning("📄 분석할 **원고**를 넣어주세요.")
+else:
+    # 1단계: 분석
+    if st.button("✨ 1단계: 원고 분석 및 프롬프트 개조", use_container_width=True, type="primary"):
+        with st.spinner("서버 상태 확인 및 원고 분석 중..."):
+            try:
+                text_res, model_used = call_text_model_with_fallback(client, f"원고를 인포그래픽용 한글 마크다운으로 정리해줘. 번역하지 말고 원문 그대로 살려.\n\n원고:\n{doc_content}")
+                st.session_state.summary_text = text_res
+                st.session_state.final_prompt = f"""
+                [TASK] Render a high-fidelity infographic board using the EXACT Korean text provided.
+                [CONTENT] {st.session_state.summary_text}
+                [DESIGN SYSTEM] {STYLE_A_PROMPT}
+                [USER REQUEST] {st.session_state.design_instruction}
+                [CRITICAL] DO NOT TRANSLATE. Write the provided Korean characters perfectly as typography.
+                """.strip()
+                st.success(f"✅ {model_used} 엔진으로 분석 완료!")
+            except Exception as e: st.error(str(e))
 
-# --- 최종 이미지 생성 실행 ---
-
-if st.button("🚀 조감도 및 아이콘 생성", type="primary", use_container_width=True):
-    if not doc_content: st.error("원고를 먼저 입력해주세요!")
-    elif not client: st.error("사이드바에서 API 키를 입력해주세요!")
-    else:
-        try:
-            with st.spinner("프롬프트 구성 중..."):
-                design_guide = DESIGN_A_GUIDE if st.session_state.design_style == "Style A" else f"STYLE: {st.session_state.design_style}"
-                icon_guide = ICON_A_GUIDE if st.session_state.icon_style == "Icon A" else f"ICON: {st.session_state.icon_style}"
-                
-                prompt_query = f"{design_guide}\n{icon_guide}\nMODE: {st.session_state.gen_mode}\nCONTENT: {doc_content[:1500]}\nGoogle Imagen 3용 상세 영문 프롬프트로 변환해줘."
-                final_prompt = client.models.generate_content(model=st.session_state.selected_gemini_model, contents=prompt_query).text
-
-            with st.spinner("Imagen 3 엔진 가동 중..."):
-                ratio_val = px_w / px_h
-                target_ratio = "16:9" if ratio_val > 1.3 else "3:4" if ratio_val < 0.8 else "1:1"
-                
-                # [최종 수정] client.models.generate_image (소문자/단수형)
-                img_res = client.models.generate_image(
-                    model=st.session_state.selected_imagen_model,
-                    prompt=final_prompt,
-                    config=types.GenerateImageConfig(aspect_ratio=target_ratio, number_of_images=1)
-                )
-                img_bytes = img_res.generated_images[0].image_bytes
-                
-                with st.container(border=True):
-                    c1, c2 = st.columns([0.7, 0.3])
-                    c1.image(Image.open(io.BytesIO(img_bytes)), use_container_width=True)
-                    c2.markdown(f"**생성 정보**\n\n- 모델: {st.session_state.selected_imagen_model}\n- 비율: {target_ratio}")
-                    with c2.expander("프롬프트 보기"): st.write(final_prompt)
-                st.balloons()
-        except Exception as e:
-            st.error(f"이미지 생성 실패: {e}")
+    if st.session_state.summary_text:
+        st.markdown(f'<div class="summary-box">', unsafe_allow_html=True)
+        st.markdown(f"### 📝 이미지에 새겨질 한글 원고")
+        st.markdown(st.session_state.summary_text)
+        st.markdown('</div>', unsafe_allow_html=True)
+        
+        # 2단계: 렌더링
+        if st.button("🚀 2단계: 노트북LM 스타일 고품질 렌더링", use_container_width=True, type="primary"):
+            with st.spinner("디자인 렌더링 중... (서버 지연 시 우회 경로 탐색)"):
+                try:
+                    img, model = generate_multimodal_image_with_fallback(client, st.session_state.final_prompt)
+                    st.image(img.resize((px_w, px_h)), use_container_width=True)
+                    st.caption(f"사용한 렌더링 엔진: {model}")
+                except Exception as e: st.error(f"렌더링 실패: {e}")
